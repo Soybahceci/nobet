@@ -1,0 +1,48 @@
+# NÖBET — KENAR yığını (kurumun içinde çalışır)
+# =============================================
+# Buluttan tamamen ayrı. Kurumun modeminde port AÇILMAZ; kenar buluta
+# giden bağlantı kurar.
+#
+#   1) docker compose up -d mosquitto
+#   2) docker compose run --rm edge python -m app.pair ABCD-EFGH-JKLM
+#   3) docker compose up -d
+name: nobet-edge
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: nobet-edge-mosquitto
+    restart: unless-stopped
+    volumes:
+      - ./mosquitto/config:/mosquitto/config:ro
+      - ./mosquitto/data:/mosquitto/data
+    ports:
+      # Okuyucular yerel ağdan bağlanır. TLS yok ve gerekmiyor: trafik
+      # kurumun ağından çıkmıyor (mimari §1).
+      - "1883:1883"
+    networks: [edge]
+
+  edge:
+    build:
+      context: ..
+      dockerfile: edge/Dockerfile
+    image: nobet-edge:0.1.0
+    container_name: nobet-edge
+    restart: unless-stopped
+    depends_on: [mosquitto]
+    environment:
+      CLOUD_URL: ${CLOUD_URL}
+      MQTT_HOST: mosquitto
+      MQTT_PORT: 1883
+      MQTT_USER: ${MQTT_USER}
+      MQTT_PASS: ${MQTT_PASS}
+      TZ: Europe/Istanbul
+    volumes:
+      # ⚠️ Kuyruk BURADA. Bu dizini silmek, senkron olmamış olayları
+      # kalıcı olarak yok eder.
+      - ./data:/data
+    networks: [edge]
+
+networks:
+  edge:
+    driver: bridge

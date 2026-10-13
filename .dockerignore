@@ -1,0 +1,15 @@
+# Derleme bağlamına GİRMEMESİ gerekenler.
+# postgres/data yüzlerce MB olabilir ve Docker daemon'a gönderilmesi
+# derlemeyi anlamsız yavaşlatır.
+
+postgres/data
+mosquitto/data
+mosquitto/log
+.env
+repo
+
+**/node_modules
+**/dist
+**/__pycache__
+**/.pio
+**/.git

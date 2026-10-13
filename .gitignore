@@ -1,0 +1,46 @@
+# ===========================================================================
+# NÖBET — versiyon kontrolü dışında kalanlar
+# ===========================================================================
+
+# --- Sırlar — ASLA versiyon kontrolüne girmez ------------------------------
+.env
+.env.*
+!.env.example
+firmware/include/secrets.h
+mosquitto/config/passwd
+wa-gateway/auth/
+*.pem
+*.key
+
+# --- Çalışma zamanı verisi -------------------------------------------------
+# Veritabanı ve dökümler depoya girmez (KVKK: gerçek öğrenci verisi olabilir)
+postgres/data/
+mosquitto/data/
+mosquitto/log/
+edge/data/
+*.sql.gz
+*.dump
+*.sqlite
+*.sqlite3
+*.db
+*.log
+
+# --- Derleme çıktıları -----------------------------------------------------
+firmware/.pio/
+.pio/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+node_modules/
+frontend/dist/
+backend/static/
+
+# --- Editör / işletim sistemi ----------------------------------------------
+.claude/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

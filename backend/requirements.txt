@@ -1,0 +1,32 @@
+# NÖBET — Backend bağımlılıkları (Faz 5)
+#
+# Kesin sürüm yerine alt sınır + majör üst sınır: kırıcı değişiklikten
+# korunuruz ama var olmayan bir sürüme sabitlenmeyiz.
+# Üretime çıkarken `pip freeze` ile kilit dosyası üretilmeli.
+
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+
+# Veritabanı
+SQLAlchemy[asyncio]>=2.0,<2.1
+asyncpg>=0.29,<1.0
+alembic>=1.13,<2.0
+
+# Ayarlar / doğrulama
+pydantic>=2.7,<3.0
+pydantic-settings>=2.3,<3.0
+email-validator>=2.1,<3.0
+
+# Kimlik doğrulama — kontrat §1.2: argon2id
+PyJWT>=2.8,<3.0
+argon2-cffi>=23.1,<26.0
+python-multipart>=0.0.9,<1.0
+
+# MQTT alım hattı (§4)
+aiomqtt>=2.0,<3.0
+
+# Bildirim ağ geçidi çağrıları (Faz 8)
+httpx>=0.27,<1.0
+
+# Sağlayıcı kimlik bilgilerinin şifrelenmesi (Fernet)
+cryptography>=42.0,<47.0

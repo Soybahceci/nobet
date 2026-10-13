@@ -1,0 +1,22 @@
+# ===========================================================================
+# Satır sonları — LF zorunlu
+# ===========================================================================
+# Bu depodaki dosyaların çoğu Linux konteynerine giriyor (Dockerfile, compose,
+# mosquitto.conf, .sh, Python). Windows'ta klonlanınca CRLF olurlarsa
+# konteyner içinde sessizce bozulurlar: `#!/bin/sh` satırı `\r` yüzünden
+# "bad interpreter" verir, config dosyaları ayrıştırılamaz.
+#
+# Bu proje bunu bir kez yaşadı (2026-08-10, CRLF'li test betiği çalışmadı).
+# `eol=lf` çalışma kopyasında da LF tutar — yalnızca depoda değil.
+
+* text=auto eol=lf
+
+# --- İkili dosyalar: dokunulmasın -----------------------------------------
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.bin  binary
+*.elf  binary

@@ -1,0 +1,175 @@
+# NÖBET — Çekirdek Yığın (Faz 4)
+# ================================
+# Bu dizinde çalıştırın; yığın bu dizinin DIŞINA hiçbir şey yazmaz.
+#
+#   docker compose up -d        başlat
+#   docker compose ps           durum
+#   docker compose logs -f      log
+#   docker compose down         durdur (veri kalır)
+#
+# İzolasyon: kendi proje adı, kendi ağı. Makinedeki diğer konteynerlere
+# ve Docker daemon ayarlarına dokunulmaz.
+
+name: nobet
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: nobet-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGDATA: /var/lib/postgresql/data/pgdata
+      TZ: Europe/Istanbul
+    volumes:
+      - ./postgres/data:/var/lib/postgresql/data
+      # init/ yalnızca veri dizini BOŞKEN çalışır. Şema değişikliği
+      # gerekirse migration ile yapılır, bu dosyalar tekrar koşmaz.
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      # Yalnızca yerelden erişilebilir. Veritabanı ağa AÇILMAZ.
+      # 5432 yerine 55432: makinedeki olası başka bir Postgres ile çakışmasın.
+      - "127.0.0.1:55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks: [nobet]
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: nobet-mosquitto
+    restart: unless-stopped
+    environment:
+      TZ: Europe/Istanbul
+      # Yalnızca healthcheck'in broker'a bağlanabilmesi için.
+      MQTT_USER: ${MQTT_USER}
+      MQTT_PASS: ${MQTT_PASS}
+    volumes:
+      - ./mosquitto/config:/mosquitto/config:ro
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+    ports:
+      # ESP32 düğümlerinin erişmesi gerekiyor, ağa açılır.
+      # Kimlik doğrulama zorunlu (allow_anonymous false).
+      - "1883:1883"
+    healthcheck:
+      # $$SYS -> konteynerde $SYS olur (Compose değişken kaçışı)
+      test: ["CMD-SHELL", "mosquitto_sub -h localhost -u $${MQTT_USER} -P $${MQTT_PASS} -t '$$SYS/broker/uptime' -C 1 -W 3 >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks: [nobet]
+
+  # --- Faz 5: Backend API -------------------------------------------------
+  api:
+    build:
+      # Baglam UST dizin: imaj hem backend/ hem frontend/ kaynagina ihtiyac
+      # duyuyor (SPA cok asamali derlemede uretilip statik olarak gomuluyor).
+      # .dockerignore postgres/data gibi agir dizinleri disarida birakir.
+      context: .
+      dockerfile: backend/Dockerfile
+    image: nobet-backend:0.1.0
+    container_name: nobet-api
+    restart: unless-stopped
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment: &backend_env
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB}
+      # Tabloların SAHİBİ. Yalnızca migration (DDL) bununla koşar.
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # Uygulamanın bağlantısı — süper OLMAYAN rol (Faz 13b-3, §10.8).
+      # Boş bırakılırsa yukarıdaki sahip role düşer; üretimde DOLU olmalı.
+      # Rolü açan betik: ./nobet-app-rolu-ac.sh
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:-}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-}
+      MQTT_HOST: mosquitto
+      MQTT_PORT: 1883
+      MQTT_USER: ${MQTT_USER}
+      MQTT_PASS: ${MQTT_PASS}
+      JWT_SECRET: ${JWT_SECRET}
+      TZ: Europe/Istanbul
+      # Bildirim kanalı (Faz 8): "dryrun" | "whatsapp"
+      NOTIFY_CHANNEL: ${NOTIFY_CHANNEL:-dryrun}
+      WA_GATEWAY_URL: http://wa-gateway:3000
+      WA_WEBHOOK_SECRET: ${WA_WEBHOOK_SECRET}
+      ADMIN_WHATSAPP: ${ADMIN_WHATSAPP:-}
+      # Sağlayıcı kimlik bilgilerini şifreler. KAYBEDİLİRSE kayıtlı
+      # sırlar çözülemez ve yeniden girilmesi gerekir.
+      SETTINGS_KEY: ${SETTINGS_KEY}
+    ports:
+      # Arayüz ve API: http://<sunucu>:8080
+      - "8080:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks: [nobet]
+
+  # --- Faz 5: MQTT alım hattı (§4) ----------------------------------------
+  # Ayrı konteyner: API çökse bile olay alımı durmaz.
+  ingest:
+    image: nobet-backend:0.1.0
+    container_name: nobet-ingest
+    restart: unless-stopped
+    depends_on:
+      postgres: {condition: service_healthy}
+      mosquitto: {condition: service_started}
+      api: {condition: service_started}      # imajın derlenmiş olması için
+    environment:
+      <<: *backend_env
+      MQTT_CLIENT_ID: nobet-ingest
+    command: ["python", "-m", "app.ingest"]
+    networks: [nobet]
+
+  # --- Faz 8: WhatsApp ağ geçidi -------------------------------------------
+  # ⚠️ Resmî WhatsApp Business API DEĞİL. Kişisel hesabı Baileys ile sürer.
+  # Kullanıcı kararı (2026-08-09); riskler README'de. Kuruma teslimde
+  # resmî Cloud API'ye geçilmeli.
+  wa-gateway:
+    build:
+      context: ./wa-gateway
+      dockerfile: Dockerfile
+    image: nobet-wa-gateway:0.1.0
+    container_name: nobet-wa
+    restart: unless-stopped
+    environment:
+      TZ: Europe/Istanbul
+      DEFAULT_COUNTRY_CODE: "90"
+      # Gelen mesajlar buraya iletilir; sır olmadan API kabul etmez
+      WEBHOOK_URL: http://api:8000/api/v1/wa/inbound
+      WEBHOOK_SECRET: ${WA_WEBHOOK_SECRET}
+    volumes:
+      # WhatsApp oturumu — silinirse QR yeniden okutulur.
+      #
+      # ⚠️ KURULUMDA: bu dizin konteynerdeki kullanıcıya (uid 10002) ait
+      # olmalı, yoksa oturum diske yazılamaz ve QR sonsuz döngüye girer
+      # ("EACCES: permission denied, open '/data/auth/creds.json'").
+      # Belirti aldatıcı: QR okutulur, bağlanır, hemen düşer.
+      #   mkdir -p wa-gateway/auth
+      #   docker run --rm -v "$PWD/wa-gateway/auth:/a" alpine \
+      #     sh -c "chown -R 10002:10002 /a && chmod 700 /a"
+      - ./wa-gateway/auth:/data/auth
+    ports:
+      # Yalnızca yerelden. `/send` ucu kimlik doğrulaması İSTEMEZ — ağa
+      # açılırsa ev ağındaki herkes bu hattan WhatsApp mesajı gönderebilir.
+      #
+      # QR eşleştirmesi gerektiğinde geçici olarak "3000:3000" yapılıp
+      # http://<sunucu-ip>:3000/qr adresinden okutulur, sonra GERİ ALINIR.
+      # (Eşleştirme yapıldı: 2026-08-09)
+      - "127.0.0.1:3000:3000"
+    networks: [nobet]
+
+networks:
+  nobet:
+    name: nobet

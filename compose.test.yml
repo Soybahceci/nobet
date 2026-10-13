@@ -1,0 +1,87 @@
+# NÖBET — TEK KULLANIMLIK TEST YIĞINI
+# ====================================
+# Neden var: `event` tablosu DEĞİŞMEZ (`event_no_delete` / `event_no_update`
+# tetikleyicileri). 2026-08-10'da kenar uçlarını gerçek veritabanında test
+# ettim ve üç sentetik olay kalıcı olarak kayıt defterine girdi — silinemedi.
+# Bir daha olmasın diye olay üreten testler BURADA koşar.
+#
+#   docker compose -f compose.test.yml up -d      kur
+#   docker compose -f compose.test.yml down -v    YOK ET (veri dahil)
+#
+# ⚠️ Üretim yığınından tamamen ayrı: farklı proje adı, farklı ağ, farklı
+# portlar ve **tmpfs** veri dizini. `down` dendiğinde hiçbir iz kalmaz;
+# yanlışlıkla gerçek veriye yazma ihtimali yok.
+#
+# Yan fayda: temiz kurulum yolunu (init SQL -> alembic stamp -> upgrade)
+# gerçekten sınıyor. Üretim veritabanı çoktan kurulu olduğu için o yol
+# bugüne kadar hiç denenmemişti.
+
+name: nobet-test
+
+services:
+  postgres-test:
+    image: postgres:16
+    container_name: nobet-test-postgres
+    environment:
+      POSTGRES_DB: nobet
+      POSTGRES_USER: nobet
+      POSTGRES_PASSWORD: test-parola-degil-gercek
+      TZ: Europe/Istanbul
+    # ⭐ tmpfs: veri diske HİÇ yazılmıyor, konteyner ölünce buharlaşıyor.
+    tmpfs:
+      - /var/lib/postgresql/data
+    volumes:
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nobet -d nobet"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [nobet-test]
+
+  api-test:
+    # Üretimde derlenmiş imajın AYNISI — test ettiğimiz şey gerçekten
+    # çalışacak olan kod olsun.
+    image: nobet-backend:0.1.0
+    container_name: nobet-test-api
+    depends_on:
+      postgres-test: {condition: service_healthy}
+    environment:
+      POSTGRES_HOST: postgres-test
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: nobet
+      POSTGRES_USER: nobet
+      POSTGRES_PASSWORD: test-parola-degil-gercek
+      # Faz 13b-3: uygulama süper olmayan rolle bağlanır. Rol yığın
+      # ayaktayken açılır (13b3-yetki.sh); açılmamışsa boş kalır ve
+      # eski davranış sürer — diğer test betikleri etkilenmez.
+      POSTGRES_APP_USER: ${TEST_APP_USER:-}
+      POSTGRES_APP_PASSWORD: ${TEST_APP_PASSWORD:-}
+      # Test yığını MQTT kullanmıyor; alım hattı burada koşmuyor.
+      MQTT_HOST: yok
+      MQTT_PORT: 1883
+      MQTT_USER: yok
+      MQTT_PASS: yok
+      JWT_SECRET: test-ortami-icin-uretilmis-anahtar-gercek-degil
+      SETTINGS_KEY: ""
+      WA_WEBHOOK_SECRET: ""
+      NOTIFY_CHANNEL: dryrun
+      TZ: Europe/Istanbul
+      # Test yığınında dokümanı açık bırakmak zararsız ve işe yarar.
+      DOCS_ENABLED: "true"
+      BOOTSTRAP_TENANT_SLUG: test-kurum
+      BOOTSTRAP_TENANT_NAME: Test Kurumu
+    ports:
+      # 8080 üretimde kullanılıyor; test 8090'da.
+      - "127.0.0.1:8090:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks: [nobet-test]
+
+networks:
+  nobet-test:
+    driver: bridge
